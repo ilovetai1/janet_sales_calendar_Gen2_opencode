@@ -16,10 +16,12 @@ erDiagram
     USERS ||--o{ SUBSCRIPTIONS : has
     USERS ||--o{ TARGET_DOCTORS : follows
     USERS ||--o{ ACTIVE_APPOINTMENTS : schedules
-    HOSPITALS ||--|{ DOCTORS : employs
-    DOCTORS ||--o{ TIMETABLES : has_schedule
+    HOSPITALS ||--o{ DOCTOR_AFFILIATIONS : hosts
+    DOCTORS ||--o{ DOCTOR_AFFILIATIONS : works_at
+    DOCTOR_AFFILIATIONS ||--o{ TIMETABLES : has_schedule
     DOCTORS ||--o{ TARGET_DOCTORS : is_targeted
     DOCTORS ||--o{ ACTIVE_APPOINTMENTS : involves
+    HOSPITALS ||--o{ ACTIVE_APPOINTMENTS : located_at
     TIMETABLES ||--o{ TIMETABLE_SUBMISSIONS : created_from
 ```
 
@@ -61,15 +63,30 @@ erDiagram
 - 寫入：僅限 `admin` 權限。
 
 ### 3. `doctors` (醫師字典表 - 共用)
-全站共用的醫師主檔，包含所屬醫院與科別。
+全站共用的醫師主檔。抽離原本綁定單一醫院的限制，僅保留醫師本人的基礎資訊。
 
 | 欄位名稱 (Column) | 型別 (Type) | 屬性 (Attributes) | 說明 (Description) |
 | :--- | :--- | :--- | :--- |
 | `id` | uuid | PK, DEFAULT uuid_generate_v4() | 醫師唯一識別碼 |
-| `hospital_id` | uuid | FK(`hospitals.id`), NOT NULL | 所屬醫院 |
 | `name` | varchar | NOT NULL | 醫師姓名 |
-| `department` | varchar | NOT NULL | 科別 (例如：心臟內科) |
+| `specialty` | varchar | | 專科或主治項目 (例如：心臟內科) |
 | `search_vector` | tsvector | | 全文檢索引擎欄位 (支援模糊比對) |
+| `created_at` | timestamptz | DEFAULT now() | |
+
+**RLS Policy**:
+- 讀取：所有已授權使用者。
+- 寫入：僅限 `admin` 權限。
+
+### 3.5 `doctor_affiliations` (醫師跨院看診關聯表 - 共用)
+處理「一位醫師同時在多家醫院看診」的多對多 (N:M) 橋接表。
+
+| 欄位名稱 (Column) | 型別 (Type) | 屬性 (Attributes) | 說明 (Description) |
+| :--- | :--- | :--- | :--- |
+| `id` | uuid | PK, DEFAULT uuid_generate_v4() | 關聯唯一識別碼 |
+| `doctor_id` | uuid | FK(`doctors.id`), NOT NULL | 對應醫師 |
+| `hospital_id` | uuid | FK(`hospitals.id`), NOT NULL | 該醫師看診的醫院 |
+| `department` | varchar | NOT NULL | 該醫師在此醫院的科別編制 |
+| `created_at` | timestamptz | DEFAULT now() | |
 
 **RLS Policy**:
 - 讀取：所有已授權使用者。
@@ -81,8 +98,7 @@ erDiagram
 | 欄位名稱 (Column) | 型別 (Type) | 屬性 (Attributes) | 說明 (Description) |
 | :--- | :--- | :--- | :--- |
 | `id` | uuid | PK, DEFAULT uuid_generate_v4() | 門診紀錄唯一識別碼 |
-| `doctor_id` | uuid | FK(`doctors.id`), NOT NULL | 對應醫師 |
-| `hospital_id` | uuid | FK(`hospitals.id`), NOT NULL | 對應醫院 (因醫師可能跨院，需冗餘或關聯標示) |
+| `affiliation_id` | uuid | FK(`doctor_affiliations.id`), NOT NULL | 直接關聯至特定的「醫師-醫院」組合 |
 | `day_of_week` | smallint | NOT NULL | 星期幾 (1=週一, 7=週日) |
 | `session_type` | enum | NOT NULL | 時段分期 (`morning`, `afternoon`, `night`) |
 | `start_time` | time | NOT NULL | 該院該診精確開始時間 (例 08:30:00) |
@@ -121,6 +137,7 @@ erDiagram
 | `id` | uuid | PK, DEFAULT uuid_generate_v4() | 行程唯一識別碼 |
 | `user_id` | uuid | FK(`users.id`), NOT NULL | 建立該行程的業務員 |
 | `doctor_id` | uuid | FK(`doctors.id`), NOT NULL | 準備拜訪的醫師 |
+| `hospital_id` | uuid | FK(`hospitals.id`), NOT NULL | 準備拜訪的醫院 (醫師跨院，需明確指定拜訪地點) |
 | `gcal_event_id` | varchar | | 對應到 Google Calendar 的 Event ID |
 | `start_time` | timestamptz | NOT NULL | 拜訪開始時間 |
 | `end_time` | timestamptz | NOT NULL | 拜訪結束時間 |
