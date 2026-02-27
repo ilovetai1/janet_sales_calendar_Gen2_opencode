@@ -98,13 +98,22 @@
 * **展示內容**：點擊通知後進入專屬頁面，列出「新增門診」、「取消/代診」或「超過 30 天未拜訪提醒」。
 
 ### 4.2 管理者端與進階功能 (Back-end Web & Future Roadmap)
-- [Admin] 提供管理者介面審核 UGC 門診表與 User 管理。
-- [Backlog] 醫師群組分類與標籤系統：允許業務自行用標籤（例如：重點攻堅、A級客戶、北投區）來分類與篩選醫師。此功能列為未來加分項目，非短期必備。
+- [Admin] **半自動門診表審核介面**：MVP 最核心的後台模組。設計用來讓工程/管理團隊上傳 PDF、預覽擷取文字，並手動核對寫入資料庫 (`timetables`)。
+- [Backlog] **醫師群組分類與標籤系統**：允許業務自行用標籤（例如：重點攻堅、A級客戶、北投區）來分類與篩選醫師。
+- [Backlog] **非 Google 系日曆支援**：未來評估接入 Apple Calendar (CalDAV) 或 Outlook 行事曆，MVP 階段僅專注確保 Google Calendar 雙向同步的穩定性。
 
 ## 5. 資料與整合邊界 (Data & Integration Boundaries)
-- **Google Calendar API**：PWA 需完整授權以達到讀寫雙向同步。
-- **Supabase Authentication**：強制透過 Google OAuth 解決方案進行。
+- **前端資料輕量化 (Data Fetching)**：
+  - 前端 PWA 絕不抓取或儲存原始的「門診表 PDF 檔案」或圖片，以節省頻寬與本地儲存空間。
+  - 前端僅向後端 API 請求經過解析後的「醫師門診時間結構化 JSON 資料」，並以此繪製可點擊排程的 UI 呈現。
+- **第三方 API 整合**：
+  - **Google Calendar API**：PWA/後端需要擁有行事曆的讀寫權限以同步行程。
+  - **Supabase Authentication**：作為唯一登入渠道。
+- **資料庫權限 (RLS)**：
+  - `private_notes` 與 `target_doctors` 表格強制綁定 Auth UID，確保資料絕對隔離。
+  - `timetables` (門診表) 則開放全體驗證使用者查詢。
 
 ## 6. 非功能需求 (Non-Functional Requirements)
-- **Mobile First**：UI/UX 設計以 iPhone 13 尺寸與 Safari 瀏覽器為首要適配目標。
-- **Offline Cache**：PWA 需支援關注清單與最近一週行程的離線存取，以便網路不佳時查閱。
+- **Mobile First**：UI/UX 介面設計以 iPhone 13 (Viewport 390x844) 尺寸與 Safari 瀏覽器為首要適配目標。
+- **Offline Cache**：PWA 需支援本機 IndexedDB 快取，確保「離線時」依然能查閱個人關注清單、過往筆記與近一週的排程紀錄。
+- **載入效能**：在 4G 網路下，醫師列表與日程表的首次載入時間不應超過 1.5 秒。
