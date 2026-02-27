@@ -119,6 +119,9 @@
 
 ### 4.2 管理者端與進階功能 (Back-end Web & Future Roadmap)
 - [Admin] **半自動門診表審核介面**：MVP 最核心的後台模組。設計用來讓工程/管理團隊上傳 PDF、預覽擷取文字，並手動核對寫入資料庫 (`timetables`)。
+- [Admin] **純手動建檔介面 (Manual Data Entry)**：針對解析徹底失效或特殊手寫稿提供的高效手動介面。
+  - **欄位設計**：提供「醫院 -> 科別 -> 醫師」三層聯動下拉選單，並設定生效日期。
+  - **操作體驗**：提供「週曆網格 (Weekly Grid)」介面，管理員點擊格子（如週二上午）即可打開時間微調彈窗，精確寫入 timestamp 至資料庫。
 - [Backlog] **醫師群組分類與標籤系統**：允許業務自行用標籤（例如：重點攻堅、A級客戶、北投區）來分類與篩選醫師。
 - [Backlog] **非 Google 系日曆支援**：未來評估接入 Apple Calendar (CalDAV) 或 Outlook 行事曆，MVP 階段僅專注確保 Google Calendar 雙向同步的穩定性。
 
