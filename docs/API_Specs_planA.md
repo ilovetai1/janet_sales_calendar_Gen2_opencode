@@ -12,6 +12,25 @@
 
 ---
 
+## 1.5 API 總覽表 (Overview)
+
+| 來源/類別 | 方法與路徑 (Endpoint) | 功能說明 (Description) |
+| :--- | :--- | :--- |
+| **前台(PWA)** | `GET /rest/v1/hospitals` | 取得醫院列表 (支援模糊搜尋) |
+| **前台(PWA)** | `GET /rest/v1/doctors` | 搜尋醫師 (姓名、專科) |
+| **前台(PWA)** | `GET /rpc/get_doctor_profile`| 取得單一醫師完整履歷與近期門診 |
+| **前台(PWA)** | `POST /rest/v1/target_doctors` | 將醫師加入「我的關注」 |
+| **前台(PWA)** | `DELETE /rest/v1/target_doctors`| 將醫師移出「我的關注」(取消關注) |
+| **前台(PWA)** | `PATCH /rest/v1/target_doctors` | 更新該醫師專屬的私密筆記 |
+| **前台(PWA)** | `POST /functions/v1/create_appointment` | 手動/一鍵排程，並同步建立 Google Caelndar Event |
+| **前台(PWA)** | `DELETE /functions/v1/cancel_appointment` | 取消排程，並同步刪除 Google Calendar Event |
+| **前台(PWA)** | `POST /functions/v1/upload_timetable_pdf` | 上傳門診表 PDF 進行即時或背景 OCR 解析 |
+| **後台(Admin)** | `GET /rest/v1/timetable_submissions` | 列出待人工審核或 OCR 失敗之門診表紀錄 |
+| **後台(Admin)** | `POST /functions/v1/admin_reprocess_ocr`| 後台管理員重新劃定特定區域進行局部 OCR 辨識 |
+| **後台(Admin)** | `POST /rpc/admin_batch_insert_timetables` | 將純手動建檔介面 (週曆網格) 的時段批次寫入門診庫 |
+
+---
+
 ## 2. 前台使用者 API (End-User / PWA)
 
 ### 2.1 基礎資料檢索 (Public Data)
@@ -19,24 +38,79 @@
 #### `GET /rest/v1/hospitals`
 * **功能**：取得醫院列表。
 * **參數**：支援 keyword fuzzy search (`?name=ilike.*長庚*`)。
-* **回傳**：`Hospital` 陣列。
+* **Example Request**:
+  ```http
+  GET /rest/v1/hospitals?name=ilike.*長庚*&select=id,name,region
+  Authorization: Bearer <token>
+  ```
+* **Example Response**:
+  ```json
+  [
+    {
+      "id": "hosp-1234-5678",
+      "name": "林口長庚紀念醫院",
+      "region": "北區"
+    }
+  ]
+  ```
 
 #### `GET /rest/v1/doctors`
 * **功能**：搜尋醫師。
 * **參數**：`?search_vector=fts(name, specialty)`
-* **回傳**：`Doctor` 陣列 (包含基本資訊)。
+* **Example Request**:
+  ```http
+  GET /rest/v1/doctors?name=ilike.*林*&select=id,name,specialty
+  Authorization: Bearer <token>
+  ```
+* **Example Response**:
+  ```json
+  [
+    {
+      "id": "doc-9876-5432",
+      "name": "林OO",
+      "specialty": "心臟內科"
+    }
+  ]
+  ```
 
 #### `GET /rpc/get_doctor_profile` (自定義 RPC)
 * **功能**：取得單一醫師的完整履歷，包含其在各醫院的看診身分 (`affiliation_id`) 與近期門診表。
-* **參數**：`{ "p_doctor_id": "uuid" }`
-* **回傳**：
+* **Example Request**:
+  ```http
+  POST /rpc/get_doctor_profile
+  Content-Type: application/json
+  Authorization: Bearer <token>
+
+  {
+    "p_doctor_id": "doc-9876-5432"
+  }
+  ```
+* **Example Response**:
   ```json
   {
-    "doctor": { "id", "name", "specialty" },
+    "doctor": { 
+      "id": "doc-9876-5432", 
+      "name": "林OO", 
+      "specialty": "心臟內科" 
+    },
     "affiliations": [
-       { "affiliation_id", "hospital_name", "department" }
+      { 
+        "affiliation_id": "aff-1111", 
+        "hospital_id": "hosp-1234",
+        "hospital_name": "林口長庚紀念醫院", 
+        "department": "心臟血管內科" 
+      }
     ],
-    "timetables": [ /* 依據 affiliation 展開的未來一個月門診時段 */ ]
+    "timetables": [
+      {
+        "affiliation_id": "aff-1111",
+        "day_of_week": 2,
+        "session_type": "morning",
+        "start_time": "08:30:00",
+        "end_time": "12:00:00",
+        "valid_from": "2024-05-01"
+      }
+    ]
   }
   ```
 
@@ -44,44 +118,139 @@
 
 #### `POST /rest/v1/target_doctors`
 * **功能**：將醫師加入「我的關注」。
-* **Body**：`{ "doctor_id": "uuid" }`
 * **備註**：`user_id` 由 JWT Token 在 DB 層自動解析寫入。
+* **Example Request**:
+  ```http
+  POST /rest/v1/target_doctors
+  Content-Type: application/json
+  Authorization: Bearer <token>
+
+  {
+    "doctor_id": "doc-9876-5432"
+  }
+  ```
+* **Example Response**:
+  ```json
+  {
+    "id": "tgt-1234-abcd",
+    "doctor_id": "doc-9876-5432",
+    "private_notes": null,
+    "created_at": "2024-05-15T10:00:00Z"
+  }
+  ```
+
+#### `DELETE /rest/v1/target_doctors?doctor_id=eq.{uuid}`
+* **功能**：將醫師從「我的關注」中移除 (取消關注)。
+* **Example Request**:
+  ```http
+  DELETE /rest/v1/target_doctors?doctor_id=eq.doc-9876-5432
+  Authorization: Bearer <token>
+  ```
+* **Example Response**: (204 No Content)
 
 #### `PATCH /rest/v1/target_doctors?doctor_id=eq.{uuid}`
 * **功能**：更新私密筆記 (Zero-Entry Notes)。
-* **Body**：`{ "private_notes": "喜歡喝無糖綠" }`
+* **Example Request**:
+  ```http
+  PATCH /rest/v1/target_doctors?doctor_id=eq.doc-9876-5432
+  Content-Type: application/json
+  Authorization: Bearer <token>
+
+  {
+    "private_notes": "習慣喝 50 嵐無糖綠"
+  }
+  ```
+* **Example Response**: (204 No Content)
 
 ### 2.3 排程與行事曆操作 (Scheduling & Sync)
 
 #### `POST /functions/v1/create_appointment` (Edge Function)
 * **功能**：「一鍵排程」寫入本機資料庫並同步建立 Google Calendar Event。
-* **Body**：
-  ```json
+* **邏輯回饋**：
+  - 若偵測到「軟性時間衝突」，回傳警告但仍可允許排入。
+* **Example Request**:
+  ```http
+  POST /functions/v1/create_appointment
+  Content-Type: application/json
+  Authorization: Bearer <token>
+
   {
-    "doctor_id": "uuid",
-    "hospital_id": "uuid",
+    "doctor_id": "doc-9876-5432",
+    "hospital_id": "hosp-1234-5678",
     "start_time": "2024-05-20T08:30:00Z",
     "end_time": "2024-05-20T12:00:00Z"
   }
   ```
-* **邏輯回饋**：
-  - 建立 `active_appointments` 紀錄。
-  - 呼叫 Google Calendar API，成功後將回傳的 `gcal_event_id` 更新回 DB。
-  - 若偵測到「軟性時間衝突」，回傳 `{"warning": "Conflict detected", "appointment_id": "..."}` 供前端提示。
+* **Example Response (Success)**:
+  ```json
+  {
+    "status": "success",
+    "appointment_id": "apt-5555",
+    "gcal_event_id": "google_event_abcdef123"
+  }
+  ```
+* **Example Response (Conflict Warning)**:
+  ```json
+  {
+    "status": "warning",
+    "message": "Double booking detected for 2024-05-20 morning.",
+    "appointment_id": "apt-5555",
+    "gcal_event_id": "google_event_abcdef123"
+  }
+  ```
 
 #### `DELETE /functions/v1/cancel_appointment` (Edge Function)
 * **功能**：取消排程，同步刪除 Google Calendar Event (僅限未來時間)。
-* **Body**：`{ "appointment_id": "uuid" }`
+* **Example Request**:
+  ```http
+  DELETE /functions/v1/cancel_appointment
+  Content-Type: application/json
+  Authorization: Bearer <token>
+
+  {
+    "appointment_id": "apt-5555"
+  }
+  ```
+* **Example Response**:
+  ```json
+  {
+    "status": "success",
+    "message": "Appointment and GCal event cancelled."
+  }
+  ```
 
 ### 2.4 門診表貢獻 (UGC Upload)
 
 #### `POST /functions/v1/upload_timetable_pdf` (Edge Function)
 * **功能**：上傳 PDF 進行 OCR 解析。
-* **Body**：`multipart/form-data` (包含 file, `hospital_id`, `target_month`)
 * **邏輯回饋**：
   - 建立 `timetable_submissions` 紀錄 (狀態 `pending`)。
   - 觸發 OCR 引擎。
   - 若 10 秒內結束，回傳解析結果預覽；若超時，回傳 `{"status": "processing", "submission_id": "..."}`，前端轉為輪詢 (Polling) 或等待 Webhook 通知。
+* **Example Request**:
+  ```http
+  POST /functions/v1/upload_timetable_pdf
+  Content-Type: multipart/form-data; boundary=---Boundary
+  Authorization: Bearer <token>
+
+  -----Boundary
+  Content-Disposition: form-data; name="hospital_id"
+  hosp-1234-5678
+  -----Boundary
+  Content-Disposition: form-data; name="target_month"
+  2024-06
+  -----Boundary
+  Content-Disposition: form-data; name="file"; filename="schedule.pdf"
+  Content-Type: application/pdf
+  <Binary Data>
+  ```
+* **Example Response (Processing)**:
+  ```json
+  {
+    "status": "processing",
+    "submission_id": "sub-mmyy123"
+  }
+  ```
 
 ---
 
@@ -91,27 +260,71 @@
 
 #### `GET /rest/v1/timetable_submissions?status=eq.pending`
 * **功能**：列出等待人工審核或 OCR 失敗的門診表上傳紀錄。
+* **Example Request**:
+  ```http
+  GET /rest/v1/timetable_submissions?status=eq.pending&select=id,hospital_id,target_month,created_at
+  Authorization: Bearer <admin_token>
+  ```
+* **Example Response**:
+  ```json
+  [
+    {
+      "id": "sub-mmyy123",
+      "hospital_id": "hosp-1234-5678",
+      "target_month": "2024-06",
+      "created_at": "2024-05-25T14:30:00Z"
+    }
+  ]
+  ```
 
 #### `POST /functions/v1/admin_reprocess_ocr` (Edge Function)
 * **功能**：管理員劃定特定區域 (Bounding Box) 要求重新進行局部 OCR 辨識。
-* **Body**：
+* **Example Request**:
+  ```http
+  POST /functions/v1/admin_reprocess_ocr
+  Content-Type: application/json
+  Authorization: Bearer <admin_token>
+
+  {
+    "submission_id": "sub-mmyy123",
+    "coordinates": { "x": 100, "y": 250, "width": 400, "height": 80 },
+    "context": { "doctor_name": "林OO" }
+  }
+  ```
+* **Example Response**:
   ```json
   {
-    "submission_id": "uuid",
-    "coordinates": { "x", "y", "width", "height" },
-    "context": { "doctor_name": "林xx" }
+    "status": "success",
+    "extracted_data": [
+      { "day_of_week": 2, "session_type": "morning" }
+    ]
   }
   ```
 
 #### `POST /rpc/admin_batch_insert_timetables` (自定義 RPC)
 * **功能**：純手動建檔介面 (Manual Grid UI) 的巨集寫入。將前端週曆網格上的時段批次轉換為 `timetables` 紀錄。
-* **Body**：
-  ```json
+* **Example Request**:
+  ```http
+  POST /rpc/admin_batch_insert_timetables
+  Content-Type: application/json
+  Authorization: Bearer <admin_token>
+
   {
-    "affiliation_id": "uuid",
-    "valid_from": "YYYY-MM-DD",
+    "affiliation_id": "aff-1111",
+    "valid_from": "2024-06-01",
     "sessions": [
       { "day_of_week": 2, "session_type": "morning", "start_time": "08:30:00", "end_time": "12:00:00" },
+      { "day_of_week": 4, "session_type": "afternoon", "start_time": "13:30:00", "end_time": "17:00:00" }
+    ]
+  }
+  ```
+* **Example Response**:
+  ```json
+  {
+    "status": "success",
+    "inserted_rows": 2
+  }
+  ```
       { "day_of_week": 4, "session_type": "afternoon", "start_time": "13:30:00", "end_time": "17:00:00" }
     ]
   }
