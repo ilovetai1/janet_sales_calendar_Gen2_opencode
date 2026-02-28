@@ -14,8 +14,11 @@
 ```mermaid
 erDiagram
     USERS ||--o{ SUBSCRIPTIONS : has
+    USERS ||--o{ USER_SESSIONS : active_on
+    USERS ||--o{ PUSH_SUBSCRIPTIONS : receives
     USERS ||--o{ TARGET_DOCTORS : follows
     USERS ||--o{ ACTIVE_APPOINTMENTS : schedules
+    USERS ||--o{ CONTRIBUTION_LEDGER : earns
     HOSPITALS ||--o{ DOCTOR_AFFILIATIONS : hosts
     DOCTORS ||--o{ DOCTOR_AFFILIATIONS : works_at
     DOCTOR_AFFILIATIONS ||--o{ TIMETABLES : has_schedule
@@ -23,6 +26,8 @@ erDiagram
     DOCTORS ||--o{ ACTIVE_APPOINTMENTS : involves
     HOSPITALS ||--o{ ACTIVE_APPOINTMENTS : located_at
     TIMETABLES ||--o{ TIMETABLE_SUBMISSIONS : created_from
+    TIMETABLE_SUBMISSIONS ||--o{ SUBMISSION_REPORTS : reported_by
+    USERS ||--o{ DAILY_DIGESTS : reads
 ```
 
 ---
@@ -37,11 +42,10 @@ erDiagram
 | `id` | uuid | PK, FK(`auth.users.id`) | 使用者唯一識別碼 |
 | `email` | varchar | UNIQUE, NOT NULL | 登入與金流綁定的 Email |
 | `full_name` | varchar | | 使用者顯示名稱 |
+| `is_onboarded` | boolean | DEFAULT false | 是否已完成初次引導流程 |
 | `gcal_access_token` | varchar | | 業務授權的 Google Calendar Token (可加密) |
 | `gcal_refresh_token`| varchar | | Google Calendar Refresh Token |
 | `gcal_calendar_id` | varchar | | `Janet Sales Calendar` 專屬子日曆的 ID |
-| `subscription_status`| enum | DEFAULT 'free_trial' | 訂閱狀態 (`free_trial`, `active`, `past_due`, `canceled`) |
-| `trial_ends_at` | timestamptz | | 試用期結束時間 |
 | `created_at` | timestamptz | DEFAULT now() | 帳號建立時間 |
 
 **RLS Policy**:
@@ -148,19 +152,94 @@ erDiagram
 **RLS Policy**:
 - 讀取/寫入/刪除：僅限 `auth.uid() = user_id`。
 
-### 7. `timetable_submissions` (UGC 門診表上傳 - MVP 階段供後台使用)
-供業務端上傳，或後台直接上傳之 PDF / 圖檔對列。作為 OCR 解析引擎 (Hybrid Engine) 的任務 Queue。
+### 7. `timetable_submissions` (UGC 門診表上傳)
+供業務端上傳，或後台直接上傳之 PDF/圖檔佇列。作為 OCR 解析引擎的任務 Queue。
 
 | 欄位名稱 (Column) | 型別 (Type) | 屬性 (Attributes) | 說明 (Description) |
 | :--- | :--- | :--- | :--- |
 | `id` | uuid | PK, DEFAULT uuid_generate_v4() | 上傳任務唯一識別碼 |
 | `uploader_id` | uuid | FK(`users.id`), NOT NULL | 貢獻者/上傳者 |
 | `hospital_id` | uuid | FK(`hospitals.id`), NOT NULL | 對應的醫院 (使用者上傳時指定) |
-| `file_url` | varchar | NOT NULL | 存在 Supabase Storage 的 PDF/圖檔位址 |
+| `target_month` | varchar | NOT NULL | 目標月份 (例如 `2024-06`) |
+| `source_type` | enum | NOT NULL | 來源類型 (`pdf`, `image`, `url`) |
+| `file_url` | varchar | | 存在 Supabase Storage 的 PDF/圖檔位址 或外部網址 |
+| `file_hash` | varchar | | 檔案的 MD5/SHA256 雜湊值 (防止重複上傳) |
 | `processing_status`| enum | DEFAULT 'pending' | 處理狀態 (`pending`, `ocr_success`, `needs_admin`, `rejected`, `approved`) |
 | `admin_feedback`| text | | 退件或處理理由 |
 | `created_at` | timestamptz | DEFAULT now() | 上傳時間 (用於計算折抵月費貢獻度) |
 
+**Constraints**:
+- `UNIQUE(hospital_id, target_month, file_hash)`: 防止同一人在當月重複上傳相同檔案。
+
 **RLS Policy**:
 - 讀取：僅能讀取 `uploader_id = auth.uid()` 之任務狀態。
 - 寫入：使用者可 Insert，但僅 `admin` 能 Update 狀態。
+
+### 8. `subscriptions` (訂閱與金流狀態)
+管理與 Stripe/藍新等金流服務對接的訂閱週期。
+
+| 欄位名稱 (Column) | 型別 (Type) | 屬性 (Attributes) | 說明 (Description) |
+| :--- | :--- | :--- | :--- |
+| `id` | uuid | PK, DEFAULT uuid_generate_v4() | 訂閱紀錄唯一識別碼 |
+| `user_id` | uuid | FK(`users.id`), NOT NULL | 關聯使用者 |
+| `stripe_customer_id`| varchar | | 金流平台客戶 ID |
+| `stripe_sub_id` | varchar | | 金流平台訂閱 ID |
+| `status` | enum | DEFAULT 'free_trial' | 訂閱狀態 (`free_trial`, `active`, `past_due`, `canceled`) |
+| `current_period_end`| timestamptz | | 當期訂閱/試用結束時間 |
+| `updated_at` | timestamptz | DEFAULT now() | |
+
+### 9. `user_sessions` (裝置登入限制)
+防範多人共用帳號，限制單一帳號的最大同時登入裝置數。
+
+| 欄位名稱 (Column) | 型別 (Type) | 屬性 (Attributes) | 說明 (Description) |
+| :--- | :--- | :--- | :--- |
+| `id` | uuid | PK, DEFAULT uuid_generate_v4() | Session 識別碼 |
+| `user_id` | uuid | FK(`users.id`), NOT NULL | |
+| `device_info` | varchar | | User-Agent 或裝置辨識碼 |
+| `last_active_at`| timestamptz | DEFAULT now() | |
+
+### 10. `push_subscriptions` (Web Push 訂閱)
+儲存 PWA 的 Web Push Token，用於傳送 Daily Digest 等系統推播。
+
+| 欄位名稱 (Column) | 型別 (Type) | 屬性 (Attributes) | 說明 (Description) |
+| :--- | :--- | :--- | :--- |
+| `id` | uuid | PK, DEFAULT uuid_generate_v4() | |
+| `user_id` | uuid | FK(`users.id`), NOT NULL | |
+| `push_token` | varchar | NOT NULL | FCM 或 Web Push Token |
+| `platform` | varchar | | `ios_safari`, `android_chrome` 等 |
+
+### 11. `submission_reports` (UGC 檢舉防弊)
+讓使用者檢舉錯誤的門診表上傳，進入管理員覆核流程。
+
+| 欄位名稱 (Column) | 型別 (Type) | 屬性 (Attributes) | 說明 (Description) |
+| :--- | :--- | :--- | :--- |
+| `id` | uuid | PK, DEFAULT uuid_generate_v4() | |
+| `submission_id` | uuid | FK(`timetable_submissions.id`), NOT NULL | 被檢舉的上傳任務 |
+| `reporter_id` | uuid | FK(`users.id`), NOT NULL | 檢舉人 |
+| `reason` | text | NOT NULL | 檢舉理由 |
+| `status` | enum | DEFAULT 'pending'| 審核狀態 (`pending`, `validated`, `dismissed`) |
+
+### 12. `contribution_ledger` (貢獻度帳本)
+記錄使用者因上傳有效門診表而獲得的積分/次月折抵額度。
+
+| 欄位名稱 (Column) | 型別 (Type) | 屬性 (Attributes) | 說明 (Description) |
+| :--- | :--- | :--- | :--- |
+| `id` | uuid | PK, DEFAULT uuid_generate_v4() | |
+| `user_id` | uuid | FK(`users.id`), NOT NULL | |
+| `submission_id` | uuid | FK(`timetable_submissions.id`) | 關聯之有效任務 |
+| `points_earned` | integer | NOT NULL | 獲得點數 |
+| `target_month` | varchar | NOT NULL | 折抵適用的月份 |
+| `created_at` | timestamptz | DEFAULT now() | |
+
+### 13. `daily_digests` (每日異動總覽紀錄)
+供業務端於 PWA 拉取過去產生的門診表異動與回訪提醒。
+
+| 欄位名稱 (Column) | 型別 (Type) | 屬性 (Attributes) | 說明 (Description) |
+| :--- | :--- | :--- | :--- |
+| `id` | uuid | PK, DEFAULT uuid_generate_v4() | |
+| `user_id` | uuid | FK(`users.id`), NOT NULL | |
+| `related_doctor_id` | uuid | FK(`doctors.id`) | (選填) 異動或提醒涉及的醫師 |
+| `summary` | text | NOT NULL | 異動總覽文字 (例如：台大醫院林OO醫師新增2個時段) |
+| `type` | enum | NOT NULL | 種類 (`timetable_changed`, `visit_reminder`, `system`) |
+| `is_read` | boolean | DEFAULT false | 使用者是否已讀 |
+| `created_at` | timestamptz | DEFAULT now() | 推播產生時間 |
