@@ -1,15 +1,11 @@
 import { Routes, Route } from 'react-router-dom'
 import { AppLayout } from '@/components/layout/AppLayout'
+import { Home } from '@/pages/Home'
+import { Follows } from '@/pages/Follows'
+import { Upload } from '@/pages/Upload'
+import { Digest } from '@/pages/Digest'
 
-// Mock Pages for MVP setup
-const Home = () => (
-  <div className="p-4">
-    <h1 className="text-xl font-bold">首頁視圖 (Dashboard)</h1>
-  </div>
-)
-const Follows = () => <div className="p-4">關注名單</div>
-const Upload = () => <div className="p-4">解析 OCR</div>
-const Digest = () => <div className="p-4">每日推播</div>
+const NotFound = () => <section className="p-4">找不到頁面</section>
 
 function App() {
   return (
@@ -19,6 +15,7 @@ function App() {
         <Route path="/follows" element={<Follows />} />
         <Route path="/upload" element={<Upload />} />
         <Route path="/digest" element={<Digest />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
   )
